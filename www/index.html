@@ -187,6 +187,7 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
       <select id="fCat"><option value="">变动类别：全部</option><option>新进</option><option>加仓</option><option>不变</option><option>减仓</option></select>
       <select id="fSubj"><option value="">主体：全部</option><option>中央汇金体系</option><option>中国证金</option><option>证金资管</option><option>社保及国资</option></select>
       <select id="fBoard"><option value="">板块：全部</option></select>
+      <select id="fInd"><option value="">行业：全部</option></select>
       <input id="fKw" placeholder="搜索代码 / 名称 / 行业">
       <span class="mut" id="rowCount"></span>
     </div>
@@ -549,8 +550,11 @@ function initContrib(){
   renderContribSec(); renderContribStock();
 }
 function refreshBoardFilter(){
-  const boards=[...new Set(activeRows().map(x=>x.board))];
+  const rows=activeRows();
+  const boards=[...new Set(rows.map(x=>x.board))];
   $("fBoard").innerHTML='<option value="">板块：全部</option>'+boards.map(b=>`<option>${b}</option>`).join("");
+  const inds=[...new Set(rows.map(x=>x.ind||"其他"))].sort((a,b)=>a.localeCompare(b,"zh"));
+  $("fInd").innerHTML='<option value="">行业：全部</option>'+inds.map(i=>`<option>${i}</option>`).join("");
 }
 function renderCatFromSel(){
   const e=activeEntry();
@@ -614,12 +618,13 @@ function mainSubj(x){
   return arr.sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";
 }
 function renderTable(){
-  const fc=$("fCat").value, fs=$("fSubj").value, fb=$("fBoard").value, kw=$("fKw").value.trim().toLowerCase();
+  const fc=$("fCat").value, fs=$("fSubj").value, fb=$("fBoard").value, fi=$("fInd").value, kw=$("fKw").value.trim().toLowerCase();
   const all=activeRows(), tot=activeTotal(), hist=!!activeEntry();
   const list=all.filter(x=>{
     if(fc&&x.status!==fc)return false;
     if(!hist&&fs&&mainSubj(x)!==fs)return false;
     if(fb&&x.board!==fb)return false;
+    if(fi&&(x.ind||"其他")!==fi)return false;
     if(kw&&!(x.code.includes(kw)||x.name.toLowerCase().includes(kw)||(x.ind||"").includes(kw)))return false;
     return true;
   });
@@ -690,7 +695,7 @@ function renderLiveTop(){
 }
 
 /* ================= 初始化 ================= */
-["fCat","fSubj","fBoard"].forEach(id=>$(id).addEventListener("change",renderTable));
+["fCat","fSubj","fBoard","fInd"].forEach(id=>$(id).addEventListener("change",renderTable));
 $("fKw").addEventListener("input",renderTable);
 (function init(){
   if(!RAW){return;}
