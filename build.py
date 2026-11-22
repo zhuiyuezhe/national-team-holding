@@ -604,6 +604,46 @@ def refresh_backtest(pk):
           f"{dates[0]} → {dates[-1]}")
 
 
+# ============================ 持仓画像 ============================
+def _median(vals):
+    s = sorted(vals)
+    n = len(s)
+    if n == 0:
+        return None
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def build_portrait(rows, exits):
+    """基于已有持仓行统计组合画像；缺失因子(PE/PB/股息)历史季度为 None，前端显示 --。"""
+    if not rows:
+        return None
+    tot = sum(r["cap"] for r in rows) or 0.0
+    ind = {}
+    for r in rows:
+        k = r.get("ind") or "其他"
+        ind[k] = ind.get(k, 0.0) + r["cap"]
+    ind_cap = sorted(ind.values(), reverse=True)
+
+    def wavg(key):
+        g = [(r["cap"], r[key]) for r in rows if r.get(key) is not None]
+        return round(sum(a * b for a, b in g) / sum(a for a, b in g), 2) if g else None
+
+    return {
+        "stock_total": len(rows),
+        "industry_count": len(ind),
+        "top1_ind_concent": round(ind_cap[0] / tot * 100, 2) if ind_cap and tot else None,
+        "top3_ind_concent": round(sum(ind_cap[:3]) / tot * 100, 2) if tot else None,
+        "w_avg_div": wavg("dy"),
+        "w_pe": wavg("pe"),
+        "w_pb": wavg("pb"),
+        "new_n": sum(1 for r in rows if r["status"] == "新进"),
+        "exit_n": len(exits or []),
+        "add_n": sum(1 for r in rows if r["status"] == "加仓"),
+        "cut_n": sum(1 for r in rows if r["status"] == "减仓"),
+        "mv_median": round(_median([r["cap"] for r in rows]), 2),
+    }
+
+
 # ============================ 打包内联 ============================
 def inline_json(pk):
     html = HTML_PATH.read_text(encoding="utf-8")
@@ -621,6 +661,9 @@ def main():
     refresh_index(pk)
     refresh_factors(pk)
     refresh_backtest(pk)
+    pk["latest_portrait"] = build_portrait(pk["rows"], pk.get("exits", []))
+    pk["history_portrait"] = [build_portrait(h["rows"], h.get("exits", []))
+                              for h in pk.get("history", [])]
     # 基线已带回测序列时保持面板可见；序列缺失才隐藏
     pk["btAvailable"] = all(k in pk and pk[k].get("dates") if k == "curve"
                              else k in pk and pk[k].get("series")

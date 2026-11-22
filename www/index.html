@@ -55,6 +55,27 @@ td{color:var(--text)}
 .qcard .n{font-size:13px;color:var(--muted)}
 .qcard .p{font-size:20px;font-weight:700;margin:4px 0;font-variant-numeric:tabular-nums}
 .qcard .d{font-size:13px;font-variant-numeric:tabular-nums}
+/* 持仓画像快照 */
+.portrait-head{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:12px}
+.portrait-head h3{margin:0}
+.portrait-switch{display:flex;gap:12px;font-size:12px;color:var(--muted);align-items:center}
+.portrait-switch label{display:flex;gap:5px;align-items:center;cursor:pointer}
+.bench-toggle-btn{margin-left:auto;background:var(--panel2);border:1px solid var(--line);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.bench-toggle-btn:hover{color:var(--text)}
+.bench-collapse-wrap{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.bench-collapse-wrap.open{max-height:180px;margin-bottom:12px}
+.bench-row{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.bench-card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 6px;text-align:center}
+.bench-card .lab{color:var(--muted);font-size:12px;margin-bottom:4px}
+.bench-card .val{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums}
+.bench-card .chg{font-size:13px;margin-top:3px;font-variant-numeric:tabular-nums}
+.portrait-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.portrait-card{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:14px 10px;text-align:center;position:relative}
+.portrait-card .lab{color:var(--muted);font-size:12px;margin-bottom:8px}
+.portrait-card .val{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+.portrait-card.warn{border-color:var(--amber);background:rgba(232,179,57,.08)}
+.portrait-card .tip{visibility:hidden;opacity:0;position:absolute;left:50%;bottom:110%;transform:translateX(-50%);background:#0b121b;color:#d0d9e6;font-size:12px;padding:8px 10px;border-radius:6px;width:220px;line-height:1.5;z-index:99;border:1px solid var(--line);transition:.2s}
+.portrait-card:hover .tip{visibility:visible;opacity:1}
 .cat-cards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:12px}
 .ccard{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;border-top:2px solid var(--gray)}
 .ccard .t{font-size:12px;color:var(--muted)}
@@ -65,7 +86,7 @@ td{color:var(--text)}
 details{margin-top:14px}
 summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
 .foot{margin-top:24px;color:var(--muted);font-size:12px;line-height:1.7;border-top:1px solid var(--line);padding-top:14px}
-@media(max-width:1100px){.kpis{grid-template-columns:repeat(4,1fr)}.row2{grid-template-columns:1fr 1fr}.row3{grid-template-columns:1fr}}
+@media(max-width:1100px){.kpis{grid-template-columns:repeat(4,1fr)}.row2{grid-template-columns:1fr 1fr}.row3{grid-template-columns:1fr}.portrait-grid{grid-template-columns:repeat(2,1fr)}.bench-row{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:640px){.wrap{padding:12px}.kpis{grid-template-columns:repeat(2,1fr)}.row2,.row3{grid-template-columns:1fr}.chart{height:260px}}
 </style>
 </head>
@@ -158,8 +179,18 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
       <div id="chCat" class="chart" style="height:210px"></div>
     </div>
     <div class="panel">
-      <h3>实时持仓快照（前 10 大权重股）</h3>
-      <div class="live-quote" id="liveTop"></div>
+      <div class="portrait-head">
+        <h3>持仓画像快照</h3>
+        <div class="portrait-switch">
+          <label><input type="radio" name="portraitMode" value="latest" checked>最新快照</label>
+          <label><input type="radio" name="portraitMode" value="follow">跟随季度</label>
+        </div>
+        <button id="benchToggleBtn" class="bench-toggle-btn">展开指数对标 ▾</button>
+      </div>
+      <div id="benchCollapseWrap" class="bench-collapse-wrap">
+        <div class="bench-row" id="benchRow"></div>
+      </div>
+      <div class="portrait-grid" id="portraitGrid"></div>
     </div>
   </section>
 
@@ -565,6 +596,7 @@ function renderCatFromSel(){
   renderKPI();
   renderOverview();
   renderBrk(); renderTable(); renderExits();
+  if(typeof refreshPortrait==="function")refreshPortrait();
 }
 
 /* ================= 分品类 × 板块 / 行业 ================= */
@@ -652,7 +684,7 @@ function renderExits(){
     `<tr><td>${x.code}</td><td>${x.name}</td><td>${fmt(x.cap,1)}</td></tr>`).join("");
 }
 
-/* ================= 实时行情 ================= */
+/* ================= 实时行情（明细表个股） ================= */
 const IDX={"000001":"sh000001","000300":"sh000300"};
 const toSym=c=>IDX[c]||sym(c);
 function loadLive(){
@@ -671,27 +703,83 @@ function loadLive(){
     window.__LIVE=out;
     const t=out["000001"]?.time||new Date().toISOString().slice(0,16).replace("T"," ");
     $("liveTime").textContent=t; $("liveDot").classList.add("on");
-    renderLiveTop(); renderTable();
+    renderTable();
   };
   s.onerror=()=>{$("liveTime").textContent="行情接口不可用，显示静态收盘价"};
   document.head.appendChild(s);
 }
-function renderLiveTop(){
-  const live=window.__LIVE||{};
-  const idxCards=["000001","000300"].map(c=>{
-    const q=live[c]; const nm=c==="000001"?"上证指数":"沪深300";
-    const price=q?q.price.toFixed(2):"—"; const p=q?pct(q.pct):"—";
-    const pc=q?(q.pct>=0?"up":"down"):"mut";
-    return `<div class="qcard"><div class="n">${nm}</div><div class="p ${pc}">${price}</div><div class="d ${pc}">${p}</div></div>`;
-  }).join("");
-  const stockCards=RAW.summary.top.slice(0,10).map(([c,n,cap,close,dy])=>{
-    const q=live[c]; const price=q?q.price.toFixed(2):(close?close.toFixed(2):"—");
-    const p=q?pct(q.pct):"—"; const pc=q?(q.pct>=0?"up":"down"):"mut";
-    return `<div class="qcard"><div class="n">${n} <span class="mut">${c}</span></div>
-      <div class="p ${pc}">${price}</div>
-      <div class="d ${pc}">${p}　<span class="mut">${cap} 亿 · 股息 ${dy?dy.toFixed(2):"—"}%</span></div></div>`;
-  }).join("");
-  $("liveTop").innerHTML=idxCards+stockCards;
+
+/* ================= 持仓画像 + 折叠指数对标 ================= */
+const BENCH=[["sh000001","上证指数"],["sh000300","沪深300"],["sh000905","中证500"],["sz399006","创业板指"],["sh000688","科创50"],["sh000015","上证红利"]];
+const PSCHEMA=[
+  ["stock_total","持仓总只数","只","本季度纳入统计的个股总数"],
+  ["industry_count","覆盖行业数","个","持仓覆盖的独立行业数量，越高代表越分散"],
+  ["top1_ind_concent","第一行业集中度","%","市值最大行业占组合总市值比例；≥40% 提示集中风险"],
+  ["top3_ind_concent","前3行业集中度","%","市值前三行业合计占比，判断是否高度抱团；≥70% 提示风险"],
+  ["w_avg_div","加权股息率","%","按个股市值加权的整体股息水平"],
+  ["w_pe","加权 PE","倍","按市值加权的市盈率，亏损股不计入"],
+  ["w_pb","加权 PB","倍","按市值加权的市净率"],
+  ["new_n","本期新进","只","对比上一期季报新增加入的个股"],
+  ["exit_n","本期清仓","只","对比上一期季报不再持有的个股"],
+  ["add_n","本期加仓","只","环比增持的个股数量"],
+  ["cut_n","本期减仓","只","环比减持的个股数量"],
+  ["mv_median","市值中位数","亿","个股市值中位数，判断持仓大小盘偏向"],
+];
+let portraitMode="latest", benchOpen=false, benchTimer=null;
+
+function initPortrait(){
+  $("portraitGrid").innerHTML=PSCHEMA.map(([id,lab,unit,tip])=>`
+    <div class="portrait-card" id="pc-${id}">
+      <div class="lab">${lab}</div>
+      <div class="val" id="p-${id}">--</div>
+      <div class="tip">${tip}</div>
+    </div>`).join("");
+  document.querySelectorAll('input[name="portraitMode"]').forEach(el=>el.addEventListener("change",()=>{portraitMode=el.value;refreshPortrait();}));
+  $("benchRow").innerHTML=BENCH.map(([sym,nm])=>`
+    <div class="bench-card"><div class="lab">${nm}</div><div class="val" id="bv-${sym}">--</div><div class="chg mut" id="bc-${sym}">--</div></div>`).join("");
+  const wrap=$("benchCollapseWrap"), btn=$("benchToggleBtn");
+  btn.addEventListener("click",()=>{
+    benchOpen=!benchOpen;
+    if(benchOpen){wrap.classList.add("open");btn.textContent="收起指数对标 ▴";fetchBench();benchTimer=setInterval(fetchBench,30000);}
+    else{wrap.classList.remove("open");btn.textContent="展开指数对标 ▾";clearInterval(benchTimer);benchTimer=null;}
+  });
+  refreshPortrait();
+}
+function curPortrait(){
+  if(portraitMode==="follow"){
+    const e=activeEntry();
+    if(e){const i=RAW.history.indexOf(e);const hp=(RAW.history_portrait||[])[i];if(hp)return hp;}
+  }
+  return RAW.latest_portrait;
+}
+function refreshPortrait(){renderPortraitDom(curPortrait());}
+function warnCard(cid,v,th){const c=$(cid);if(!c)return;const n=parseFloat(v);c.classList.toggle("warn",!isNaN(n)&&n>=th);}
+function renderPortraitDom(p){
+  if(!p)return;
+  const safe=v=>(v===null||v===undefined)?"--":v;
+  PSCHEMA.forEach(([id,lab,unit])=>{
+    const el=$("p-"+id);if(!el)return;
+    const v=p[id];
+    el.textContent=safe(v)+(v===null||v===undefined?"":(" "+unit));
+  });
+  warnCard("pc-top1_ind_concent",p.top1_ind_concent,40);
+  warnCard("pc-top3_ind_concent",p.top3_ind_concent,70);
+}
+function fetchBench(){
+  const qs=BENCH.map(b=>b[0]).join(",");
+  const s=document.createElement("script");
+  s.src=`https://qt.gtimg.cn/q=${qs}`;
+  s.onload=()=>{BENCH.forEach(([sym])=>{
+    const g=window["v_"+sym];if(!g)return;const a=g.split("~");if(a.length<33)return;
+    renderBench(sym,+a[3],+a[32]);
+  });};
+  document.head.appendChild(s);
+}
+function renderBench(sym,price,pct){
+  const v=$("bv-"+sym),c=$("bc-"+sym);if(!v||!c)return;
+  v.textContent=price?price.toFixed(2):"--";
+  c.textContent=(pct>=0?"+":"")+pct.toFixed(2)+"%";
+  c.className="chg "+(pct>=0?"up":"down");
 }
 
 /* ================= 初始化 ================= */
@@ -711,6 +799,7 @@ $("fKw").addEventListener("input",renderTable);
     Object.keys(RAW.subj).map(s=>`<option value="${s}">${s}</option>`).join("");
   $("fFlowQ").addEventListener("change",renderFlowInd);
   $("fFlowSubj").addEventListener("change",renderFlowInd);
+  initPortrait();
   renderCatFromSel();
   initContrib();
   loadLive();
