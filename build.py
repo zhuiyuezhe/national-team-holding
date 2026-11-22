@@ -439,7 +439,7 @@ def build_contrib(rows, closes, dates, tot_cap):
     """按季度桶计算 P1 市值加权口径的个股 / 板块贡献（单位：百分点）。
 
     个股贡献 = 个股市值权重 × 个股区间涨跌幅；板块贡献 = 成分个股贡献之和。
-    行情缺失的个股跳过；TOP20 个股附带桶内归一化迷你走势。
+    行情缺失的个股跳过；TOP30 个股附带桶内归一化迷你走势。
     """
     labels, bounds = _bucket_bounds(dates)
     if not labels or tot_cap <= 0:
@@ -480,8 +480,8 @@ def build_contrib(rows, closes, dates, tot_cap):
                  "ret": round(v["contrib"] / v["w"] * 100, 2) if v["w"] > 0 else None,
                  "contrib": round(v["contrib"], 3), "cap": round(v["cap"], 1)}
                 for k, v in sec.items()]
-        pos = sorted([x for x in secs if x["contrib"] > 0], key=lambda a: -a["contrib"])[:10]
-        neg = sorted([x for x in secs if x["contrib"] <= 0], key=lambda a: a["contrib"])[:10]
+        pos = sorted([x for x in secs if x["contrib"] > 0], key=lambda a: -a["contrib"])[:15]
+        neg = sorted([x for x in secs if x["contrib"] <= 0], key=lambda a: a["contrib"])[:15]
         sectors_q.append(sorted(pos + neg, key=lambda a: a["contrib"]))
         stocks_q.append(sorted(stk, key=lambda a: -a["contrib"]))
     return {"quarters": labels, "sectors": sectors_q, "stocks": stocks_q}
