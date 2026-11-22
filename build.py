@@ -417,6 +417,76 @@ def quarterly_returns(nav, dates):
     return labels, rets
 
 
+def _bucket_bounds(dates):
+    """回测窗口内的季度桶边界：返回 (标签列表, [(起始下标, 结束下标), ...])。"""
+    ends = OrderedDict()
+    for i, d in enumerate(dates):
+        ends[_qkey(d)] = i
+    keys = list(ends)
+    labels, bounds, prev = [], [], 0
+    for k in keys:
+        ei = ends[k]
+        if k == keys[0] and dates[0][5:7] != dates[ei][5:7]:
+            labels.append(f"{k}({int(dates[0][5:7])}-{int(dates[ei][5:7])}月)")
+        else:
+            labels.append(k)
+        bounds.append((prev, ei))
+        prev = ei + 1
+    return labels, bounds
+
+
+def build_contrib(rows, closes, dates, tot_cap):
+    """按季度桶计算 P1 市值加权口径的个股 / 板块贡献（单位：百分点）。
+
+    个股贡献 = 个股市值权重 × 个股区间涨跌幅；板块贡献 = 成分个股贡献之和。
+    行情缺失的个股跳过；TOP20 个股附带桶内归一化迷你走势。
+    """
+    labels, bounds = _bucket_bounds(dates)
+    if not labels or tot_cap <= 0:
+        return None
+    sectors_q, stocks_q = [], []
+    for s, e in bounds:
+        d0, d1 = dates[s], dates[e]
+        stk = []
+        sec = defaultdict(lambda: {"n": 0, "w": 0.0, "contrib": 0.0, "cap": 0.0})
+        for r in rows:
+            kl = closes.get(r["code"])
+            if not kl:
+                continue
+            pm = dict(kl)
+            p0, p1 = pm.get(d0), pm.get(d1)
+            if not p0 or not p1 or p0 <= 0:
+                continue
+            w = r["cap"] / tot_cap
+            ret = p1 / p0 - 1
+            cb = w * ret * 100
+            stk.append({"code": r["code"], "name": r["name"], "ind": r["ind"] or "其他",
+                        "weight": round(w * 100, 3), "ret": round(ret * 100, 2),
+                        "contrib": round(cb, 3)})
+            g = sec[r["ind"] or "其他"]
+            g["n"] += 1
+            g["w"] += w * 100
+            g["contrib"] += cb
+            g["cap"] += r["cap"]
+        top20 = sorted(stk, key=lambda x: -abs(x["contrib"]))[:20]
+        spark_set = {x["code"] for x in top20}
+        for x in stk:
+            if x["code"] in spark_set:
+                pm = dict(closes[x["code"]])
+                seq = [pm[dates[j]] for j in range(s, e + 1) if pm.get(dates[j])]
+                base = seq[0] if seq else None
+                x["spark"] = [round(v / base, 3) for v in seq] if base else []
+        secs = [{"ind": k, "n": v["n"], "weight": round(v["w"], 2),
+                 "ret": round(v["contrib"] / v["w"] * 100, 2) if v["w"] > 0 else None,
+                 "contrib": round(v["contrib"], 3), "cap": round(v["cap"], 1)}
+                for k, v in sec.items()]
+        pos = sorted([x for x in secs if x["contrib"] > 0], key=lambda a: -a["contrib"])[:10]
+        neg = sorted([x for x in secs if x["contrib"] <= 0], key=lambda a: a["contrib"])[:10]
+        sectors_q.append(sorted(pos + neg, key=lambda a: a["contrib"]))
+        stocks_q.append(sorted(stk, key=lambda a: -a["contrib"]))
+    return {"quarters": labels, "sectors": sectors_q, "stocks": stocks_q}
+
+
 def perf_stats(nav, bench=None):
     rets = [nav[i] / nav[i - 1] - 1 for i in range(1, len(nav))]
     cum = nav[-1] / nav[0] - 1
@@ -464,6 +534,10 @@ def refresh_backtest(pk):
 
     schemes = build_schemes(rows)
     navs = {name: nav_series(w, closes, dates) for name, w in schemes.items()}
+
+    contrib = build_contrib(rows, closes, dates, tot_cap)
+    if contrib:
+        pk["contrib"] = contrib
 
     bv = [bench_k[d] for d in dates]
     bnav = [c / bv[0] for c in bv]
