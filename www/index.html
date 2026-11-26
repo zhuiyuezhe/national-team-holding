@@ -43,6 +43,7 @@ td{color:var(--text)}
 .t-减仓{background:rgba(47,181,115,.15);color:var(--down)}
 .t-清仓{background:rgba(107,122,136,.18);color:var(--gray)}
 .up{color:var(--up)} .down{color:var(--down)} .mut{color:var(--muted)}
+.hf-link{color:var(--cyan);cursor:pointer;text-decoration:underline dotted}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
 .toolbar select,.toolbar input{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 10px;font-size:13px}
 .toolbar input{flex:1;min-width:160px}
@@ -254,6 +255,15 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
         <thead><tr><th>代码</th><th>名称</th><th>动作</th><th>持股数</th><th>占流通比%</th></tr></thead>
         <tbody></tbody>
       </table>
+    </div>
+    <div id="peerBox" hidden style="margin-top:12px">
+      <div class="mut" id="hfPeerTitle" style="margin-bottom:6px;font-size:12px"></div>
+      <div class="tbl-scroll" style="max-height:260px">
+        <table id="tblHolderPeer">
+          <thead><tr><th>机构</th><th>类型</th><th>动作</th><th>持股数</th><th>占流通比%</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
     </div>
     <div class="mut" style="margin-top:8px;font-size:12px">口径：基于前十大流通股东两期名册（2026Q3 对比 2026Q2）diff；个人大股东已剔除；香港中央结算（含 HKSCC）合并为陆股通/结算席位；“退出”指上期在前十大、本期跌出前十大。名册仅披露前十大，不等于清仓。</div>
   </section>
@@ -786,8 +796,22 @@ function renderSubjFlow(){
 /* ================= 机构名称级持仓穿透 ================= */
 const HF = (RAW.holderFlow && RAW.holderFlow.holders) ? RAW.holderFlow : null;
 let hfSel = null;
+let hfStockSel = null;
+let HF_REV = null;
 const HF_CATS = ["新进", "加仓", "减仓", "退出"];
 function hfStockCount(h){ return HF_CATS.reduce((s,k)=>s+(h[k]?h[k].length:0),0); }
+function buildHfRev(){
+  const rev={};
+  HF_CATS.forEach(k=>rev[k]={});
+  (HF?HF.holders:[]).forEach(h=>{
+    HF_CATS.forEach(k=>{
+      (h[k]||[]).forEach(s=>{
+        (rev[k][s.c]=rev[k][s.c]||[]).push({h:h.h,k:h.k,s:s.s,r:s.r});
+      });
+    });
+  });
+  return rev;
+}
 function fmtShares(s){
   if(s==null) return "—";
   return Math.abs(s)>=1e8 ? fmt(s/1e8,2)+" 亿股" : fmt(s/1e4,0)+" 万股";
@@ -796,6 +820,7 @@ function renderHolderFlow(){
   const box=$("tblHolder").closest(".panel");
   if(!HF){ if(box) box.style.display="none"; return; }
   if(box) box.style.display="";
+  if(!HF_REV) HF_REV=buildHfRev();
   const fk=$("hfKind").value, fc=$("hfCat").value, kw=$("hfKw").value.trim().toLowerCase();
   $("hfMeta").textContent=HF.label||"";
   let list=HF.holders.filter(h=>{
@@ -816,7 +841,7 @@ function renderHolderFlow(){
       <td><b>${tot}</b></td></tr>`;
   }).join("");
   $("tblHolder").querySelectorAll("tr[data-h]").forEach(tr=>tr.addEventListener("click",()=>{
-    hfSel=tr.getAttribute("data-h"); renderHolderFlow();
+    hfSel=tr.getAttribute("data-h"); hfStockSel=null; renderHolderFlow();
   }));
   const cur=HF.holders.find(h=>h.h===hfSel);
   let rows=[];
@@ -826,9 +851,30 @@ function renderHolderFlow(){
     rows.sort((a,b)=>(b.s||0)-(a.s||0));
   }
   $("tblHolderStock").querySelector("tbody").innerHTML=cur?rows.map(s=>`
-    <tr><td>${s.c}</td><td>${s.n}</td><td><span class="tag t-${s.act==="退出"?"清仓":s.act}">${s.act}</span></td>
+    <tr><td>${s.c}</td><td><span class="hf-link" data-c="${s.c}" data-n="${s.n}" data-act="${s.act}">${s.n}</span></td><td><span class="tag t-${s.act==="退出"?"清仓":s.act}">${s.act}</span></td>
     <td>${fmtShares(s.s)}</td><td>${s.r!=null?fmt(s.r,2):"—"}</td></tr>`).join("")
     :`<tr><td colspan="5" class="mut">${cur?"该机构当前动作下无个股":"点击上方机构查看其持仓个股"}</td></tr>`;
+  $("tblHolderStock").querySelectorAll(".hf-link").forEach(sp=>sp.addEventListener("click",()=>{
+    hfStockSel={c:sp.getAttribute("data-c"),n:sp.getAttribute("data-n"),act:sp.getAttribute("data-act")};
+    renderHolderFlow();
+  }));
+  // 反查：同期对同一个股做相同动作的其他机构
+  const peerBox=$("peerBox");
+  if(!hfStockSel || !cur){ peerBox.hidden=true; }
+  else{
+    const peers=((HF_REV[hfStockSel.act]||{})[hfStockSel.c])||[];
+    peers.sort((a,b)=>(b.s||0)-(a.s||0));
+    peerBox.hidden=false;
+    $("hfPeerTitle").textContent=`${hfStockSel.n}（${hfStockSel.c}）· 同期${hfStockSel.act}机构 ${peers.length} 家`;
+    $("tblHolderPeer").querySelector("tbody").innerHTML=peers.map(p=>`
+      <tr data-h="${p.h}">
+        <td><span class="hf-link">${p.h}</span></td><td>${p.k}</td>
+        <td><span class="tag t-${hfStockSel.act==="退出"?"清仓":hfStockSel.act}">${hfStockSel.act}</span></td>
+        <td>${fmtShares(p.s)}</td><td>${p.r!=null?fmt(p.r,2):"—"}</td></tr>`).join("");
+    $("tblHolderPeer").querySelectorAll("tr[data-h]").forEach(tr=>tr.addEventListener("click",()=>{
+      hfSel=tr.getAttribute("data-h"); hfStockSel=null; renderHolderFlow();
+    }));
+  }
 }
 
 /* ================= 实时行情（明细表个股） ================= */
