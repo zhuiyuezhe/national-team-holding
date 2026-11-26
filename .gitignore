@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 *.zip
+# 备份与机构名册采集缓存
+www/*.bak.*
+holder-flow/holders_raw.json
+holder-flow/holder_flow.json
