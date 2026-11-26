@@ -134,7 +134,8 @@ def aggregate(current, prior, meta):
         if code not in current:
             cat["清仓"]["n"] += 1
             cat["清仓"]["cap"] += v["cap"]
-            exits.append({"code": code, "name": v["name"], "cap": round(v["cap"], 2)})
+            exits.append({"code": code, "name": v["name"], "cap": round(v["cap"], 2),
+                          "subj": v.get("subj", "其他")})
     ind_top = sorted(ind.items(), key=lambda kv: -kv[1]["cap"])[:14]
     rows.sort(key=lambda r: -r["cap"])
     return {
@@ -168,6 +169,44 @@ def refresh_history(pk):
     if history:
         pk["history"] = history
         print(f"[ok] 历史季度重算 {len(history)} 个")
+
+
+def backfill_exits_subj(pk):
+    """给退出（清仓）个股补归属主体。
+
+    本期退出为相对 2025Q3（2025-09-30）名单的退出，按同比基准季快照回溯；
+    历史季退出为环比上季退出，按上一季快照回溯；快照缺失记“其他”。
+    """
+    def snap_map(date, cache):
+        if date not in cache:
+            cache[date] = fetch_snapshot(date) or {}
+        return cache[date]
+
+    cache = {}
+    n = 0
+    base = snap_map("2025-09-30", cache)
+    for x in pk.get("exits", []):
+        if x.get("subj"):
+            continue
+        v = base.get(x["code"])
+        x["subj"] = v["subj"] if v else "其他"
+        n += 1
+    for h in pk.get("history", []):
+        dt = h["date"]
+        if dt in DATES:
+            idx = DATES.index(dt)
+            prior_date = DATES[idx - 1] if idx > 0 else None
+        else:
+            prior_date = None
+        snap = snap_map(prior_date, cache) if prior_date else {}
+        for x in h.get("exits", []):
+            if x.get("subj"):
+                continue
+            v = snap.get(x["code"])
+            x["subj"] = v["subj"] if v else "其他"
+            n += 1
+    if n:
+        print(f"[ok] 退出个股主体回溯补全 {n} 只")
 
 
 # ============================ 指数日线 ============================
@@ -658,6 +697,7 @@ def inline_json(pk):
 def main():
     pk = json.loads(JSON_PATH.read_text(encoding="utf-8"))
     refresh_history(pk)
+    backfill_exits_subj(pk)
     refresh_index(pk)
     refresh_factors(pk)
     refresh_backtest(pk)
