@@ -211,6 +211,29 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
     </div>
   </section>
 
+  <!-- ===== 机构（主体）持仓变动穿透 ===== -->
+  <section class="panel" style="margin-top:14px">
+    <h3>机构（主体）持仓变动穿透 · 新进 / 加仓 / 减仓 / 退出（<span id="subjFlowMeta"></span>）</h3>
+    <div class="toolbar">
+      <select id="fSubjFlow"><option value="">主体：全部</option><option>中央汇金体系</option><option>中国证金</option><option>证金资管</option><option>社保及国资</option></select>
+      <select id="fCatFlow"><option value="">动作：全部</option><option>新进</option><option>加仓</option><option>减仓</option><option>不变</option><option>清仓退出</option></select>
+      <span class="mut" id="subjFlowCount"></span>
+    </div>
+    <div class="tbl-scroll" style="max-height:230px;margin-bottom:12px">
+      <table id="tblSubjMatrix">
+        <thead><tr><th>主体</th><th>新进</th><th>加仓</th><th>减仓</th><th>不变</th><th>在持合计</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="tbl-scroll" style="max-height:360px">
+      <table id="tblSubjFlow">
+        <thead><tr><th>代码</th><th>名称</th><th>行业</th><th>板块</th><th>归属主体</th><th>动作</th><th>市值(亿)</th><th>环比(万股)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="mut" style="margin-top:8px;font-size:12px">口径：主体按该票四大主体持股市值最大者归属，同持一只票的其他主体不计入；清仓退出个股未回溯主体，整体列示；历史季主体归属按当前季映射回溯，无分主体市值明细。</div>
+  </section>
+
   <!-- ===== 明细 ===== -->
   <section class="panel" style="margin-top:14px">
     <h3>持仓明细（<span id="detailN"></span> 只，可筛选 / 搜索）</h3>
@@ -595,7 +618,7 @@ function renderCatFromSel(){
   refreshBoardFilter();
   renderKPI();
   renderOverview();
-  renderBrk(); renderTable(); renderExits();
+  renderBrk(); renderTable(); renderExits(); renderSubjFlow();
   if(typeof refreshPortrait==="function")refreshPortrait();
 }
 
@@ -682,6 +705,51 @@ function renderExits(){
   $("exitTitle").textContent=`查看本期退出（清仓）名单 · ${ex.length} 只`;
   $("exitBody").innerHTML=ex.map(x=>
     `<tr><td>${x.code}</td><td>${x.name}</td><td>${fmt(x.cap,1)}</td></tr>`).join("");
+}
+
+/* ================= 机构（主体）持仓变动穿透 ================= */
+const SUBJ_LIST=["中央汇金体系","中国证金","证金资管","社保及国资"];
+const FLOW_ORDER=["新进","加仓","减仓","不变"];
+function rowSubj(x){ return x.subj || mainSubj(x); }
+function renderSubjFlow(){
+  const rows=activeRows(), exits=activeExits();
+  const fs=$("fSubjFlow").value, fc=$("fCatFlow").value;
+  const e=activeEntry();
+  $("subjFlowMeta").textContent=e?e.label:"2026Q3 当前口径";
+  // 主体 × 动作 聚合（在持个股）
+  const agg={};
+  SUBJ_LIST.forEach(s=>{agg[s]={}; FLOW_ORDER.forEach(k=>agg[s][k]={n:0,cap:0});});
+  rows.forEach(x=>{
+    const s=rowSubj(x);
+    if(!agg[s]) agg[s]={};
+    if(!agg[s][x.status]) agg[s][x.status]={n:0,cap:0};
+    agg[s][x.status].n++; agg[s][x.status].cap+=(x.cap||0);
+  });
+  let mhtml="";
+  SUBJ_LIST.forEach(s=>{
+    const a=agg[s]; let totN=0,totCap=0;
+    const cells=FLOW_ORDER.map(k=>{const c=a[k]||{n:0,cap:0};totN+=c.n;totCap+=c.cap;return `<td>${c.n} · ${fmt(c.cap,1)}</td>`;}).join("");
+    mhtml+=`<tr><td>${s}</td>${cells}<td><b>${totN}</b> · ${fmt(totCap,1)}</td></tr>`;
+  });
+  const exitCap=exits.reduce((s,x)=>s+(x.cap||0),0);
+  mhtml+=`<tr><td>清仓退出（未回溯主体）</td><td colspan="4">—</td><td><b>${exits.length}</b> · ${fmt(exitCap,1)}</td></tr>`;
+  $("tblSubjMatrix").querySelector("tbody").innerHTML=mhtml;
+
+  // 穿透明细清单
+  let list=[];
+  if(fc==="清仓退出"){
+    list=exits.map(x=>({code:x.code,name:x.name,ind:"—",board:"—",subj:"—",status:"清仓",cap:x.cap,chg:null}));
+  }else{
+    list=rows.map(x=>({code:x.code,name:x.name,ind:x.ind||"—",board:x.board||"—",subj:rowSubj(x),status:x.status,cap:x.cap,chg:x.chg}));
+    if(fc) list=list.filter(x=>x.status===fc);
+  }
+  if(fs) list=list.filter(x=>x.subj===fs);
+  list.sort((a,b)=>(b.cap||0)-(a.cap||0));
+  $("subjFlowCount").textContent="显示 "+list.length+" 只";
+  $("tblSubjFlow").querySelector("tbody").innerHTML=list.map(x=>`
+    <tr><td>${x.code}</td><td>${x.name}</td><td>${x.ind}</td><td>${x.board}</td>
+    <td>${x.subj}</td><td><span class="tag t-${x.status}">${x.status}</span></td>
+    <td>${fmt(x.cap,1)}</td><td>${x.chg!=null?fmt(x.chg,1):"—"}</td></tr>`).join("");
 }
 
 /* ================= 实时行情（明细表个股） ================= */
@@ -785,6 +853,8 @@ function renderBench(sym,price,pct){
 /* ================= 初始化 ================= */
 ["fCat","fSubj","fBoard","fInd"].forEach(id=>$(id).addEventListener("change",renderTable));
 $("fKw").addEventListener("input",renderTable);
+$("fSubjFlow").addEventListener("change",renderSubjFlow);
+$("fCatFlow").addEventListener("change",renderSubjFlow);
 (function init(){
   if(!RAW){return;}
   renderKPI(); charts();
