@@ -27,10 +27,6 @@ RAW_CACHE = os.path.join(ROOT, "holders_raw.json")
 OUT_JSON = os.path.join(ROOT, "holder_flow.json")
 PACK_JSON = os.path.join(ROOT, "holder_flow_pack.json")
 
-CURRENT = "2026-09-30"
-PRIOR = "2026-06-30"
-LABEL_CUR = "2026Q3（环比 2026Q2）"
-
 EM_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -43,6 +39,28 @@ NOMINAL_PREFIX = "HKSCC"
 NOMINAL_NAME = "香港中央结算（陆股通/代理人）"
 # 穿透主表保留的机构大类（其它里的结算通道单列，个人剔除）
 KEEP_KINDS = {"机构", "陆股通/结算"}
+
+
+def _quarter(date):
+    y, m = date[:4], int(date[5:7])
+    return f"{y}Q{(m - 1) // 3 + 1}"
+
+
+QUARTER_ENDS = {"03-31", "06-30", "09-30", "12-31"}
+
+
+def detect_periods(cache):
+    """从已抓名册中探测最新两个季末期：返回 (本期, 上期)，上期缺失为 None。"""
+    from collections import Counter
+    cnt = Counter()
+    for p in cache.values():
+        for d in (p.get("periods") or {}):
+            if d[5:] in QUARTER_ENDS:
+                cnt[d] += 1
+    dates = sorted(cnt.keys(), reverse=True)
+    if not dates:
+        return None, None
+    return dates[0], (dates[1] if len(dates) > 1 else None)
 
 
 def sec_code(code):
@@ -195,7 +213,7 @@ def slim_pack(flow):
     }
 
 
-def build_flow(cache):
+def build_flow(cache, current, prior, label):
     by_holder = {}
     by_stock = {}
     holder_type = {}
@@ -214,13 +232,13 @@ def build_flow(cache):
 
     for code, payload in cache.items():
         periods = payload.get("periods", {})
-        cur = _index(periods.get(CURRENT, []))
-        prior = _index(periods.get(PRIOR, []))
+        cur_idx = _index(periods.get(current, []))
+        prior_idx = _index(periods.get(prior, [])) if prior else {}
         name = payload.get("name", "")
         stock_holders = []
 
         # 本期在册
-        for k, h in cur.items():
+        for k, h in cur_idx.items():
             entry = {
                 "holder": h["holder"], "type": h["type"], "kind": h["kind"],
                 "state": h["state"], "shares": h["shares"], "ratio": h["ratio"],
@@ -240,8 +258,8 @@ def build_flow(cache):
             })
 
         # 退出：上期在册、本期不在前十大（按归一 key 匹配）
-        for k, h in prior.items():
-            if k in cur:
+        for k, h in prior_idx.items():
+            if k in cur_idx:
                 continue
             stock_holders.append({
                 "holder": h["holder"], "type": h["type"], "kind": h["kind"],
@@ -270,9 +288,9 @@ def build_flow(cache):
     holder_list.sort(key=lambda x: -x["total"])
 
     return {
-        "report_date": CURRENT,
-        "prior_date": PRIOR,
-        "label": LABEL_CUR,
+        "report_date": current,
+        "prior_date": prior,
+        "label": label,
         "byHolder": holder_list,
         "byStock": by_stock,
     }
@@ -285,22 +303,43 @@ if __name__ == "__main__":
     names = {x["code"]: x["name"] for x in base["rows"]}
     names.update({x["code"]: x["name"] for x in base.get("exits", [])})
     codes = list(names.keys())
+    old_pack = base.get("holderFlow")
 
-    cache, fail = collect(codes, refresh=refresh)
-    flow = build_flow(cache)
-    flow["meta"] = {
-        "pool": len(codes),
-        "cached": len(cache),
-        "fail": fail,
-        "holders": len(flow["byHolder"]),
-        "stocks": len(flow["byStock"]),
-    }
-    json.dump(flow, open(OUT_JSON, "w", encoding="utf-8"), ensure_ascii=False)
-    pack = slim_pack(flow)
-    json.dump(pack, open(PACK_JSON, "w", encoding="utf-8"), ensure_ascii=False)
-    print(f"[done] 机构 {flow['meta']['holders']}，个股 {flow['meta']['stocks']}，失败 {len(fail)}")
+    pack = None
+    fail = []
+    try:
+        cache, fail = collect(codes, refresh=refresh)
+        current, prior = detect_periods(cache)
+        if not current:
+            raise RuntimeError("未采集到任何名册周期")
+        label = (f"{_quarter(current)}（环比 {_quarter(prior)}）"
+                 if prior else f"{_quarter(current)}")
+        flow = build_flow(cache, current, prior, label)
+        flow["meta"] = {
+            "pool": len(codes),
+            "cached": len(cache),
+            "fail": fail,
+            "holders": len(flow["byHolder"]),
+            "stocks": len(flow["byStock"]),
+        }
+        json.dump(flow, open(OUT_JSON, "w", encoding="utf-8"), ensure_ascii=False)
+        pack = slim_pack(flow)
+        old_n = len(old_pack["holders"]) if old_pack else 0
+        # 可用性兜底：新包机构数过少（不足基线半数且不足 20 家）则沿用基线包
+        if not pack["holders"] or (old_n and len(pack["holders"]) < max(20, old_n * 0.5)):
+            print(f"[warn] 新包机构 {len(pack['holders'])} 少于基线 {old_n} 半数，沿用基线 holderFlow")
+            pack = old_pack
+        else:
+            json.dump(pack, open(PACK_JSON, "w", encoding="utf-8"), ensure_ascii=False)
+            print(f"[done] 机构 {flow['meta']['holders']}，个股 {flow['meta']['stocks']}，"
+                  f"失败 {len(fail)}，周期 {current} / {prior}")
+    except Exception as e:
+        print(f"[warn] 机构名册采集异常，沿用基线 holderFlow：{e}")
+        pack = old_pack
 
-    if "--merge" in sys.argv:
+    if pack is None:
+        print("[warn] 无可用 holderFlow 数据包，跳过并入")
+    elif "--merge" in sys.argv:
         base = json.load(open(BASE_JSON, encoding="utf-8"))
         base["holderFlow"] = pack
         json.dump(base, open(BASE_JSON, "w", encoding="utf-8"), ensure_ascii=False)
