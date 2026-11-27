@@ -315,6 +315,29 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
     <div class="mut" style="margin-top:8px;font-size:12px">口径：基于前十大流通股东两期名册（2026Q3 对比 2026Q2）diff；个人大股东已剔除；香港中央结算（含 HKSCC）合并为陆股通/结算席位；“退出”指上期在前十大、本期跌出前十大。名册仅披露前十大，不等于清仓。</div>
   </section>
 
+  <!-- ===== 多机构共振：同票同动作机构家数分档 ===== -->
+  <section class="panel" style="margin-top:14px">
+    <h3>多机构共振 · 同票新进 / 加仓机构家数分档（<span id="hfResMeta"></span>）</h3>
+    <div class="toolbar">
+      <select id="hfResCat"><option>新进</option><option>加仓</option></select>
+      <select id="hfResN">
+        <option value="">家数：全部（≥2 家）</option>
+        <option value="2">2 家</option>
+        <option value="3">3 家</option>
+        <option value="4">4 家</option>
+        <option value="5">5 家及以上</option>
+      </select>
+      <span class="mut" id="hfResCount"></span>
+    </div>
+    <div class="tbl-scroll" style="max-height:320px">
+      <table id="tblRes">
+        <thead><tr><th>代码</th><th>名称</th><th>机构家数</th><th>并列机构（点名称回选）</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="mut" style="margin-top:8px;font-size:12px">口径：同一报告期内，对同一只个股做出相同动作（新进 / 加仓）的机构数量；按 2 家、3 家、4 家、5 家及以上分档。点股票名可在上方穿透面板反查同期机构，点机构名可回选该机构。</div>
+  </section>
+
   <!-- ===== 明细 ===== -->
   <section class="panel" style="margin-top:14px">
     <h3>持仓明细（<span id="detailN"></span> 只，可筛选 / 搜索）</h3>
@@ -845,6 +868,8 @@ const HF = (RAW.holderFlow && RAW.holderFlow.holders) ? RAW.holderFlow : null;
 let hfSel = null;
 let hfStockSel = null;
 let HF_REV = null;
+let hfResCat = "新进";
+let hfResN = "";
 const HF_CATS = ["新进", "加仓", "减仓", "退出"];
 function hfStockCount(h){ return HF_CATS.reduce((s,k)=>s+(h[k]?h[k].length:0),0); }
 function buildHfRev(){
@@ -853,7 +878,7 @@ function buildHfRev(){
   (HF?HF.holders:[]).forEach(h=>{
     HF_CATS.forEach(k=>{
       (h[k]||[]).forEach(s=>{
-        (rev[k][s.c]=rev[k][s.c]||[]).push({h:h.h,k:h.k,s:s.s,r:s.r});
+        (rev[k][s.c]=rev[k][s.c]||[]).push({h:h.h,k:h.k,n:s.n,s:s.s,r:s.r});
       });
     });
   });
@@ -922,6 +947,49 @@ function renderHolderFlow(){
       hfSel=tr.getAttribute("data-h"); hfStockSel=null; renderHolderFlow();
     }));
   }
+}
+
+/* ===== 多机构共振：同票同动作机构家数分档 ===== */
+function renderResonance(){
+  const panel=$("tblRes").closest(".panel");
+  if(!HF){ if(panel) panel.style.display="none"; return; }
+  if(panel) panel.style.display="";
+  if(!HF_REV) HF_REV=buildHfRev();
+  $("hfResMeta").textContent=HF.label||"";
+  const act=$("hfResCat").value||"新进";
+  const nb=$("hfResN").value;
+  const byCode=HF_REV[act]||{};
+  let rows=Object.keys(byCode).map(c=>{
+    const peers=byCode[c];
+    const name=(peers[0]&&peers[0].n)||"";
+    const tot=peers.reduce((a,p)=>a+(p.s||0),0);
+    return {c,n:name,peers,tot};
+  }).filter(r=>r.peers.length>=2);
+  if(nb){ rows=rows.filter(r=>nb==="5"?r.peers.length>=5:r.peers.length===+nb); }
+  rows.sort((a,b)=>b.peers.length-a.peers.length||b.tot-a.tot);
+  $("hfResCount").textContent=`个股 ${rows.length} 只`;
+  const body=$("tblRes").querySelector("tbody");
+  if(!rows.length){
+    body.innerHTML=`<tr><td colspan="4" class="mut">该档位下暂无同票多机构${act}个股</td></tr>`;
+    return;
+  }
+  body.innerHTML=rows.map(r=>{
+    const links=r.peers.map(p=>`<span class="hf-link" data-h="${p.h}">${p.h}</span>`).join("、");
+    return `<tr>
+      <td>${r.c}</td>
+      <td><span class="hf-link" data-c="${r.c}" data-n="${r.n}" data-act="${act}">${r.n}</span></td>
+      <td><b>${r.peers.length}</b> 家</td>
+      <td style="text-align:left">${links}</td></tr>`;
+  }).join("");
+  body.querySelectorAll("span[data-h]").forEach(sp=>sp.addEventListener("click",()=>{
+    hfSel=sp.getAttribute("data-h"); hfStockSel=null; renderHolderFlow();
+    const p=$("tblHolder").closest(".panel"); if(p) p.scrollIntoView({behavior:"smooth",block:"start"});
+  }));
+  body.querySelectorAll("span[data-c]").forEach(sp=>sp.addEventListener("click",()=>{
+    hfStockSel={c:sp.getAttribute("data-c"),n:sp.getAttribute("data-n"),act:sp.getAttribute("data-act")};
+    renderHolderFlow();
+    const p=$("tblHolder").closest(".panel"); if(p) p.scrollIntoView({behavior:"smooth",block:"start"});
+  }));
 }
 
 /* ================= 实时行情（明细表个股） ================= */
@@ -1030,6 +1098,8 @@ $("fCatFlow").addEventListener("change",renderSubjFlow);
 $("hfKind").addEventListener("change",renderHolderFlow);
 $("hfCat").addEventListener("change",renderHolderFlow);
 $("hfKw").addEventListener("input",renderHolderFlow);
+$("hfResCat").addEventListener("change",renderResonance);
+$("hfResN").addEventListener("change",renderResonance);
 (function init(){
   if(!RAW){return;}
   renderKPI(); charts();
@@ -1047,6 +1117,7 @@ $("hfKw").addEventListener("input",renderHolderFlow);
   initPortrait();
   renderCatFromSel();
   renderHolderFlow();
+  renderResonance();
   initContrib();
   loadLive();
   setInterval(loadLive,30000);
