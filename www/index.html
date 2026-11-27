@@ -320,8 +320,13 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
     <h3>多机构共振 · 同票新进 / 加仓机构家数分档（<span id="hfResMeta"></span>）</h3>
     <div class="toolbar">
       <select id="hfResCat"><option>新进</option><option>加仓</option></select>
+      <select id="hfResScope">
+        <option value="">全部机构</option>
+        <option value="ss">社保基金系</option>
+      </select>
       <select id="hfResN">
-        <option value="">家数：全部（≥2 家）</option>
+        <option value="">家数：全部</option>
+        <option value="1">1 家</option>
         <option value="2">2 家</option>
         <option value="3">3 家</option>
         <option value="4">4 家</option>
@@ -335,7 +340,7 @@ summary{cursor:pointer;color:var(--muted);font-size:13px;padding:8px 0}
         <tbody></tbody>
       </table>
     </div>
-    <div class="mut" style="margin-top:8px;font-size:12px">口径：同一报告期内，对同一只个股做出相同动作（新进 / 加仓）的机构数量；按 2 家、3 家、4 家、5 家及以上分档。点股票名可在上方穿透面板反查同期机构，点机构名可回选该机构。</div>
+    <div class="mut" style="margin-top:8px;font-size:12px">口径：同一报告期内，对同一只个股做出相同动作（新进 / 加仓）的机构数量，按 1 家、2 家、3 家、4 家、5 家及以上分档。“社保基金系”指名称含“社保基金”或“养老保险”的社保理事会组合。点股票名可在上方穿透面板反查同期机构，点机构名可回选该机构。</div>
   </section>
 
   <!-- ===== 明细 ===== -->
@@ -870,6 +875,8 @@ let hfStockSel = null;
 let HF_REV = null;
 let hfResCat = "新进";
 let hfResN = "";
+let hfResScope = "";
+function isSocSec(name){ return name && (name.includes("社保基金") || name.includes("养老保险")); }
 const HF_CATS = ["新进", "加仓", "减仓", "退出"];
 function hfStockCount(h){ return HF_CATS.reduce((s,k)=>s+(h[k]?h[k].length:0),0); }
 function buildHfRev(){
@@ -932,7 +939,7 @@ function renderHolderFlow(){
   }));
   // 反查：同期对同一个股做相同动作的其他机构
   const peerBox=$("peerBox");
-  if(!hfStockSel || !cur){ peerBox.hidden=true; }
+  if(!hfStockSel){ peerBox.hidden=true; }
   else{
     const peers=((HF_REV[hfStockSel.act]||{})[hfStockSel.c])||[];
     peers.sort((a,b)=>(b.s||0)-(a.s||0));
@@ -958,19 +965,22 @@ function renderResonance(){
   $("hfResMeta").textContent=HF.label||"";
   const act=$("hfResCat").value||"新进";
   const nb=$("hfResN").value;
+  const scope=$("hfResScope").value;
   const byCode=HF_REV[act]||{};
   let rows=Object.keys(byCode).map(c=>{
-    const peers=byCode[c];
-    const name=(peers[0]&&peers[0].n)||"";
+    const all=byCode[c];
+    const peers=scope==="ss"?all.filter(p=>isSocSec(p.h)):all;
+    const name=(all[0]&&all[0].n)||"";
     const tot=peers.reduce((a,p)=>a+(p.s||0),0);
     return {c,n:name,peers,tot};
-  }).filter(r=>r.peers.length>=2);
+  }).filter(r=>scope==="ss"?r.peers.length>=1:r.peers.length>=2);
   if(nb){ rows=rows.filter(r=>nb==="5"?r.peers.length>=5:r.peers.length===+nb); }
   rows.sort((a,b)=>b.peers.length-a.peers.length||b.tot-a.tot);
   $("hfResCount").textContent=`个股 ${rows.length} 只`;
   const body=$("tblRes").querySelector("tbody");
   if(!rows.length){
-    body.innerHTML=`<tr><td colspan="4" class="mut">该档位下暂无同票多机构${act}个股</td></tr>`;
+    const tip=scope==="ss"?`该档位下暂无社保基金系${act}个股`:`该档位下暂无同票多机构${act}个股`;
+    body.innerHTML=`<tr><td colspan="4" class="mut">${tip}</td></tr>`;
     return;
   }
   body.innerHTML=rows.map(r=>{
@@ -1099,6 +1109,7 @@ $("hfKind").addEventListener("change",renderHolderFlow);
 $("hfCat").addEventListener("change",renderHolderFlow);
 $("hfKw").addEventListener("input",renderHolderFlow);
 $("hfResCat").addEventListener("change",renderResonance);
+$("hfResScope").addEventListener("change",renderResonance);
 $("hfResN").addEventListener("change",renderResonance);
 (function init(){
   if(!RAW){return;}
